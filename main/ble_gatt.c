@@ -18,14 +18,10 @@
 static const uint16_t primary_service_uuid = ESP_GATT_UUID_PRI_SERVICE; // ?
 static const uint16_t character_declaration_uuid = ESP_GATT_UUID_CHAR_DECLARE; //?
 static const uint8_t char_prop_notify = ESP_GATT_CHAR_PROP_BIT_NOTIFY; // ?
-static const uint8_t stroller_service_uuid[32] = {0xF9, 0xD4, 0x24, 0xD3, 
-                                                  0xBD, 0xD6, 0x4F, 0x86, 
-                                                  0xAB, 0x67, 0x8D, 0xB2, 
-                                                  0x07, 0x69, 0x21, 0xC8};  //F9D424D3-BDD6-4F86-AB67-8DB2076921C8
-// TODO: Should this go in the GAP?
 
-static int __attribute__((unused)) reset_tab=0;
+// TODO: Should this go in the GAP? TODO: Should what?
 
+uint8_t value_holder = 0;
 
 // #pragma mark -
 // #pragma mark Service/Characteristic Creation
@@ -49,7 +45,7 @@ static void uuid_set(esp_bt_uuid_t * dest, const void * src, int16_t uuid_len)
   }
 }
 
-ble_gatt_service_t * ble_gatt_service_create(const uint8_t *uuid, int16_t uuid_len, esp_gatts_cb_t cb)
+ble_gatt_service_t * ble_gatt_service_create(const uint8_t *uuid, int16_t uuid_len, ble_gatt_char_cb_t cb)
 {
   ble_gatt_service_t * svc = malloc(sizeof(ble_gatt_service_t));
   memset(svc, '\0', sizeof(ble_gatt_service_t));
@@ -172,7 +168,7 @@ ble_gatt_char_t * ble_gatt_get_char_by_uuid(ble_gatt_service_t * svc, esp_bt_uui
   while (NULL != svc)
   {
     ble_gatt_char_t * cha = svc->characteristics;
-    printf("Searching service %p (char head %p)\n", svc, svc->characteristics);
+//    printf("Searching service %p (char head %p)\n", svc, svc->characteristics);
     while (NULL != cha)
     {
       switch(cha->uuid.len)
@@ -219,6 +215,37 @@ ble_gatt_char_t * ble_gatt_get_char_by_uuid(ble_gatt_service_t * svc, esp_bt_uui
   return NULL;
 }
 
+ble_gatt_char_t * ble_gatt_get_char_by_handle(ble_gatt_service_t * svc, uint16_t handle)
+{
+  // Search all services if it wasn't provided
+  if (NULL == svc)
+    svc = service_head;
+
+  bool last_service = (svc != NULL);
+  
+  while (NULL != svc)
+  {
+    ble_gatt_char_t * cha = svc->characteristics;
+    // printf("Searching service %p (char head %p)\n", svc, svc->characteristics);
+    while (NULL != cha)
+    {
+      if (cha->handle == handle)
+        return cha;
+      
+      cha = cha->next;
+    }
+    
+    // If the service to search was provided, bound the search within that service.
+    if (last_service)
+      return NULL;
+
+    svc = svc->next;
+  }
+  
+  return NULL;
+}
+
+
 
 void ble_gatt_start(void)
 {
@@ -229,6 +256,8 @@ void ble_gatt_start(void)
     esp_ble_gatts_app_register(svc->ble_service_id);
     svc = svc->next;
   }
+  
+  gap_start_advertising();
 }
 
 
@@ -281,16 +310,17 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
         break;
       }
 
+      // esp_ble_gap_config_adv_data()
 
       // Remember the assigned if
       svc->gatts_if = gatts_if;
       
       // Create service
       // This will create and then fire the callback with the event BTA_GATTS_CREATE_SRVC_EVT
-      //
+      // TODO: number of handles seems to need to be characteristic_count * 4
       esp_ble_gatts_create_service(gatts_if, 
         &svc->service_id,         // Why is this a pointer?
-        4); // Number of handles requested?
+        8); // Number of handles requested?
 
       break;
 
@@ -316,14 +346,30 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       while(NULL != cha)
       {
         printf("Adding Characteristic %08x\n", cha->uuid.uuid.uuid32);
-        esp_ble_gatts_add_char(
+        
+        esp_attr_value_t value_attr = {
+          .attr_max_len = 1,                      /*!<  attribute max value length */     
+          .attr_len = 1,                          /*!<  attribute current value length */ 
+          .attr_value = &value_holder                      // cannot be null
+        }; 
+        
+        esp_err_t ret = esp_ble_gatts_add_char(
           svc->service_handle,
           &cha->uuid,
           cha->perm,
           cha->properties, //
-          NULL, // value (initial?)
+          &value_attr, // value (initial?) (can be NULL)
           NULL  // attribute response control byte
         );
+          
+        if (ret == ESP_OK)
+        {
+          ESP_LOGI(LOGT, "esp_ble_gatts_add_char: %d\n", ret);
+        }
+        else
+        {
+          ESP_LOGE(LOGT, "esp_ble_gatts_add_char: %d\n", ret);
+        }
           
         cha = cha->next;
       }
@@ -343,35 +389,29 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       // Lookup by characteristic UUID
       //
       ble_gatt_char_t * cha = ble_gatt_get_char_by_uuid(svc, &param->add_char.char_uuid);
-      ESP_LOGI(LOGT, "got characteristic %p\n", cha);
+      // ESP_LOGI(LOGT, "got characteristic %p\n", cha);
       
       // Record info on the added characteristics
       //
       // Record attr_handle
       cha->handle = param->add_char.attr_handle;
       
-      // Debug something or other?
-      /*
-      uint16_t length = 0;
-      const uint8_t *prf_char;
-      esp_ble_gatts_get_attr_value(param->add_char.attr_handle,  &length, &prf_char);
-      for(int i = 0; i < length; i++)
-      {
-          ESP_LOGI(LOGT, "prf_char[%x] =%x\n",i,prf_char[i]);
-      }
-      */
-
+      
       // Record and apply the Client Characteristic Configuration Descriptor
       // so that the connected device can tell us that it wants notifications (or indications).
       //
       cha->descr_uuid.len = ESP_UUID_LEN_16;
       cha->descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
 
+      // This gets added to the last characteristic added, which is stupid.
+      //
+      /*
       esp_ble_gatts_add_char_descr(svc->service_handle, &cha->descr_uuid,
                                    ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, // descriptor access permission
                                    NULL, // char descriptor value
                                    NULL  // attribute response control byte
                                   );
+      */
       break;
     }
         
@@ -380,7 +420,7 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
     {
       ESP_LOGI(LOGT, "GATT_READ_EVT, conn_id %d, trans_id %d, handle %d\n", param->read.conn_id, param->read.trans_id, param->read.handle);
 
-      // TODO: dispatch read/write callback properly
+      // TODO: dispatch read/write callback properly                    
 
       esp_gatt_rsp_t rsp;
       memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
@@ -397,30 +437,56 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
   
     case ESP_GATTS_WRITE_EVT: 
     {
-      // TODO: dispatch read/write callback properly
-      ESP_LOGI(LOGT, "GATT_WRITE_EVT, conn_id %d, trans_id %d, handle %d\n", param->write.conn_id, param->write.trans_id, param->write.handle);
-      ESP_LOGI(LOGT, "GATT_WRITE_EVT, value len %d, value %08x\n", param->write.len, *(uint32_t *)param->write.value);
+      // ESP_LOGI(LOGT, "GATT_WRITE_EVT conn_id %d; trans_id %d; handle %d; need rsp %d; prep %d",
+      //           param->write.conn_id, param->write.trans_id, param->write.handle, param->write.need_rsp, param->write.is_prep);
+      // ESP_LOGI(LOGT, "                value len %d, value %08x\n", param->write.len, *(uint32_t *)param->write.value);
       
+      //TODO: Handle the (possibly buffered) write
       //example_write_event_env(gatts_if, &b_prepare_write_env, param);
+      
+      // Call the registered callback
+      // Get the relavent characteristic
+      ble_gatt_char_t * cha = ble_gatt_get_char_by_handle(svc, param->write.handle);
+      //ESP_LOGI(LOGT, "Got characteristic for write: %p", cha);
+      printf("wr %p\n", cha);
+
+//      esp_gatt_status_t status = svc->callback(cha, param)
+        
+      esp_gatt_status_t status = ESP_GATT_OK;
+      
+      // Send response
+      // This was allocating a 600 byte payload.
+      if (param->write.need_rsp)
+      {
+        esp_gatt_rsp_t *gatt_rsp = (esp_gatt_rsp_t *)malloc(sizeof(esp_gatt_rsp_t) - ESP_GATT_MAX_ATTR_LEN + param->write.len);
+        gatt_rsp->attr_value.len = param->write.len;
+        gatt_rsp->attr_value.handle = param->write.handle;
+        gatt_rsp->attr_value.offset = param->write.offset;
+        gatt_rsp->attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
+
+        memcpy(gatt_rsp->attr_value.value, param->write.value, param->write.len);
+
+        esp_err_t ret = esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, gatt_rsp);
+
+        if (ret != ESP_OK)
+           ESP_LOGE(PROJ, "Write event: response error %d", ret);
+
+        free(gatt_rsp);
+      }
+      
       break;
     }
   
   
     case ESP_GATTS_EXEC_WRITE_EVT:
+    {
       // TODO: dispatch read/write callback properly
-      ESP_LOGI(LOGT,"ESP_GATTS_EXEC_WRITE_EVT");
+      ESP_LOGW(LOGT,"ESP_GATTS_EXEC_WRITE_EVT");
       esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
       //example_exec_write_event_env(&b_prepare_write_env, param);
       break;
+    }
       
-    case ESP_GATTS_MTU_EVT: printf("ESP_GATTS_MTU_EVT\n");break;
-    case ESP_GATTS_CONF_EVT: printf("ESP_GATTS_CONF_EVT\n");break;
-    case ESP_GATTS_UNREG_EVT: printf("ESP_GATTS_UNREG_EVT\n");
-      break;
-
-
-    case ESP_GATTS_ADD_INCL_SRVC_EVT: printf("ESP_GATTS_ADD_INCL_SRVC_EVT\n");
-      break;
 
 
     case ESP_GATTS_ADD_CHAR_DESCR_EVT:
@@ -428,19 +494,15 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
                param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
       break;
 
-    case ESP_GATTS_DELETE_EVT:
-      break;
+
 
     case ESP_GATTS_START_EVT:
       ESP_LOGI(LOGT, "SERVICE_START_EVT, status %d, service_handle %d\n",
                param->start.status, param->start.service_handle);
       break;
-
-    case ESP_GATTS_STOP_EVT:
-      break;
       
     case ESP_GATTS_CONNECT_EVT:
-      ESP_LOGI(LOGT, "CONNECT_EVT, conn_id %d, remote %02x:%02x:%02x:%02x:%02x:%02x:, is_conn %d\n",
+      ESP_LOGI(LOGT, "CONNECT_EVT, conn_id %d, remote %02x:%02x:%02x:%02x:%02x:%02x:, is_connected %d\n",
                param->connect.conn_id,
                param->connect.remote_bda[0], param->connect.remote_bda[1], param->connect.remote_bda[2],
                param->connect.remote_bda[3], param->connect.remote_bda[4], param->connect.remote_bda[5],
@@ -449,7 +511,7 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       svc->conn_id = param->connect.conn_id;
 
       // Start sent the update connection parameters to the peer device.
-      // For the IOS system, please reference the apple official documents 
+      // For the iOS system, please reference the apple official documents 
       // about the BLE connection parameters restrictions
       //
       ble_gap_update_connection_params(&param->connect.remote_bda);
@@ -460,12 +522,22 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       esp_ble_gap_start_advertising(&adv_params);
       break;
       
-    case ESP_GATTS_OPEN_EVT:
-    case ESP_GATTS_CANCEL_OPEN_EVT:
-    case ESP_GATTS_CLOSE_EVT:
-    case ESP_GATTS_LISTEN_EVT:
-    case ESP_GATTS_CONGEST_EVT:
+
+    case ESP_GATTS_MTU_EVT: printf("ESP_GATTS_MTU_EVT\n");break;
+    case ESP_GATTS_CONF_EVT: printf("ESP_GATTS_CONF_EVT\n");break;
+    case ESP_GATTS_UNREG_EVT: printf("ESP_GATTS_UNREG_EVT\n"); break;
+    case ESP_GATTS_ADD_INCL_SRVC_EVT: printf("ESP_GATTS_ADD_INCL_SRVC_EVT\n"); break;
+    case ESP_GATTS_DELETE_EVT:  printf("ESP_GATTS_DELETE_EVT\n"); break;
+    case ESP_GATTS_STOP_EVT: printf("ESP_GATTS_STOP_EVT\n"); break;
+    case ESP_GATTS_OPEN_EVT: printf("ESP_GATTS_OPEN_EVT\n"); break;
+    case ESP_GATTS_CANCEL_OPEN_EVT: printf("ESP_GATTS_CANCEL_OPEN_EVT\n"); break;
+    case ESP_GATTS_CLOSE_EVT: printf("ESP_GATTS_CLOSE_EVT\n"); break;
+    case ESP_GATTS_LISTEN_EVT: printf("ESP_GATTS_LISTEN_EVT\n"); break;
+    case ESP_GATTS_CONGEST_EVT: printf("ESP_GATTS_CONGEST_EVT\n"); break;
+    case ESP_GATTS_RESPONSE_EVT: printf("ESP_GATTS_RESPONSE_EVT\n"); break;
+    
     default:
+      ESP_LOGW(LOGT, "Unhandled event: %d", event)
       break;
   }
 }

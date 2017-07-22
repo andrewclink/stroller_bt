@@ -13,7 +13,7 @@
 
 esp_ble_adv_params_t adv_params = {
     .adv_int_min        = 0x20, // interval min: x*0.625 == (hex) * 1; 0x20 * 0.625 = 20ms
-    .adv_int_max        = 0x40, // interval max
+    .adv_int_max        = 0x40, // interval max; 0xA0=100ms
     .adv_type           = ADV_TYPE_IND, // advertising type
     .own_addr_type      = BLE_ADDR_TYPE_PUBLIC, // owner bluetooth device address type
     //.peer_addr            =
@@ -24,6 +24,7 @@ esp_ble_adv_params_t adv_params = {
 
 
 // TODO: determine where this is used and how we should configure
+#if 0
 static uint8_t test_service_uuid128[32] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
     //first uuid, 16bit, [12],[13] is the value
@@ -31,6 +32,11 @@ static uint8_t test_service_uuid128[32] = {
     //second uuid, 32bit, [12], [13], [14], [15] is the value
     0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xAB, 0xCD, 0xAB, 0xCD,
 };
+#endif
+
+extern const uint8_t stroller_service_uuid[16];
+
+uint8_t test_manufacturer_data[4] = {0x11, 0x22, 0x33, 0x44};
 
 esp_ble_adv_data_t adv_data = {
     .set_scan_rsp = false,
@@ -40,26 +46,45 @@ esp_ble_adv_data_t adv_data = {
     .max_interval = 0x40,
     .appearance = 0x00,
     .manufacturer_len = 0, //TEST_MANUFACTURER_DATA_LEN,
-    .p_manufacturer_data =  NULL, //&test_manufacturer[0],
+    .p_manufacturer_data = NULL, //&test_manufacturer[0],
+
     .service_data_len = 0,
     .p_service_data = NULL,
-    .service_uuid_len = 32,
-    .p_service_uuid = test_service_uuid128,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
+
+    .service_uuid_len = 16,
+    .p_service_uuid = (uint8_t*)stroller_service_uuid,
+
+    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT), //no enhanced data rate
+    
 };
 
+
+// Configures advertising data in the BT stack
+void gap_start_advertising(void)
+{
+  esp_err_t result;
+  
+  printf("Set Device Name\n");
+  esp_ble_gap_set_device_name("EStroller");
+  
+  result = esp_ble_gap_config_adv_data(&adv_data);
+  if (ESP_OK != result) { ESP_LOGE(LOGT, "Could not config adv data: %d", result); }
+}
 
 void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
     switch (event) 
     {
+      // Advertising data configuration is done; ready to advertise
       case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
         ESP_LOGI(LOGT, "DATA_SET_COMPLETE_EVT\n");
 
-        esp_ble_gap_set_device_name("EStroller");
-        printf("Set Device Name\n");
+        ESP_LOGI(LOGT, "Start advertising")
+        esp_err_t result;
 
-        esp_ble_gap_start_advertising(&adv_params);
+        result = esp_ble_gap_start_advertising(&adv_params);
+        if (ESP_OK != result) { ESP_LOGE(LOGT, "Could not start adv: %d", result); }
+
         break;
       
       case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
@@ -102,7 +127,7 @@ void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
 void ble_gap_update_connection_params(esp_bd_addr_t * remote_addr)
 {
   // Start sent the update connection parameters to the peer device.
-  // For the IOS system, please reference the apple official documents 
+  // For iOS, please reference the apple official documents 
   // about the ble connection parameters restrictions
   //
   esp_ble_conn_update_params_t conn_params = {0};
