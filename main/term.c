@@ -20,6 +20,11 @@
 
 #define BUF_SIZE (128)
 
+// HACK
+extern bool debug_pid;
+extern bool debug_mot;
+
+
 //an example of echo test with hardware flow control on UART1
   void term_task(void * unused)
 {
@@ -96,6 +101,13 @@
           break;
         }
         
+        case 'P':
+          debug_pid = !debug_pid;
+          break;
+
+        case 'M':
+          debug_mot = !debug_mot;
+          break;
 
         case 'u':
         {
@@ -111,7 +123,22 @@
         {
           printf("Enabling PID\n");
           motor_setManual(false);
+          break;
         }
+        
+        
+        case 'r':
+        {
+          // set RPM
+          int rpm = atoi((char*)&line[1]);
+          
+          printf("set motor to %u RPM\n", rpm);
+          // motor_setManual(true);
+          motor_setRPM(rpm);
+          break;
+        }
+        
+        
         
         default: break;
         

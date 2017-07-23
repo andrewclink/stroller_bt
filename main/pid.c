@@ -13,6 +13,7 @@ float pid_kp = 0.05;
 float pid_kd = 0.001;
 float pid_ki = 0.0001;
 
+bool debug_pid = false;
 
 void pid_get(uint16_t *delta_ms, float * kp, float * ki, float * kd)
 {
@@ -35,7 +36,10 @@ void pid_set(uint16_t delta_ms, float kp, float ki, float kd)
   pid_ki = ki * dt_seconds;
   pid_kd = kd / dt_seconds;
   
-  printf("Kp= %.5f; Ki= %.5f; Kd= %.5f\n", pid_kp, pid_ki, pid_kd);
+  if (debug_pid)
+  {
+    printf("Kp= %.5f; Ki= %.5f; Kd= %.5f\n", pid_kp, pid_ki, pid_kd);
+  }
   
 }
 

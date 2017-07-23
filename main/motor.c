@@ -12,6 +12,7 @@
 #include "soc/ledc_struct.h"
 
 #include "driver/gpio.h"
+#include "driver/pcnt.h"
 
 #include "motor.h"
 #include "pid.h"
@@ -21,10 +22,17 @@
 #define motor_pulley_teeth 14
 #define SPEED_CHANGE_UNIT 1
 
+// pulsecount
+#define RPM_PIN 4
+#define PCNT_UNIT PCNT_UNIT_0
+#define MOTOR_POLES 14
+
+// PWM<
+#define INTV_MS           60
 #define REFRESH_USEC         20000
 #define REFRESH_HZ           (1000000 / REFRESH_USEC)
 
-#define signal_pin 5
+#define signal_pin 5 //pwm
 #define pwm_ch 0
 #define timer_bitwidth 12
 #define timer_ticks  (1 << 12)
@@ -68,30 +76,40 @@ xSemaphoreHandle _pwm_lock;
 #define PWM_CONF1_SCALE_bs        (0)
 
 
-static uint32_t motor_us = signal_lo_us  + 500;
+static uint32_t motor_us = signal_lo_us;
 static uint32_t motor_rpm_setpoint = 0;
-static bool motor_is_manual = false;
+static bool motor_is_manual = true;
 
+bool debug_mot = false;
 
 static void motor_start_pwm(void);
+static void motor_start_rpm_monitor(void);
 static float motor_spk_to_rpm(int sec);
 static int motor_us_to_ticks(int usec);
 
 void motor_task(void *parm)
 {
   motor_start_pwm();
-  // vTaskDelay(4000  / portTICK_RATE_MS);
+  motor_start_rpm_monitor();
+  
+  motor_us(signal_lo_us);
+  vTaskDelay(100 / portTICK_RATE_MS);
   
   pid_set(100, 0.028, 0.025, 0.005);
 
   for(;;)
   {
-    vTaskDelay(100  / portTICK_RATE_MS);
+    vTaskDelay(60  / portTICK_RATE_MS);
+    
+    // Debug counted RPM pulses
+    int16_t pole_count;
+    pcnt_get_counter_value(PCNT_UNIT, &pole_count);
+    pcnt_counter_clear(PCNT_UNIT);
+    
+    uint16_t rpm = pole_count * /*1000/60ms=*/(float)(1000.0/INTV_MS) * 60 / MOTOR_POLES;
     
     if (motor_is_manual)
       continue;
-      
-    int rpm = /* get current rpm */ 800;
     
     float pid_out = pid_calc(motor_rpm_setpoint, rpm);
 
@@ -118,10 +136,11 @@ void motor_task(void *parm)
     // static int8_t skip = 10;
     // if(skip-- < 0)
     // {
-    
-    uint32_t val = READ_PERI_REG(LEDC_LSTIMER0_VALUE_REG);
-    
-    printf("pwm: RPM %4u  SET %4u ### pid %4.2f ### us %4u ### tmr %08x\n", rpm, motor_rpm_setpoint, pid_out, motor_us, val);
+    if (debug_mot)
+    {
+      uint32_t val = READ_PERI_REG(LEDC_LSTIMER0_VALUE_REG);
+      printf("pwm: RPM %4u  SET %4u ### pid %4.2f ### us %4u ### tmr %08x\n", rpm, motor_rpm_setpoint, pid_out, motor_us, val);
+    }
     //   skip = 10;
     // }
   }
@@ -151,6 +170,11 @@ void motor_setPace_KmS(int km_p_sec)
   
   printf("pwm: setpoint %.0f\n", rpm_setpoint);
   motor_rpm_setpoint = (uint32_t)rpm_setpoint;
+}
+
+void motor_setRPM(int RPM)
+{
+  motor_rpm_setpoint = RPM;
 }
 
 void motor_set_us(int us)
@@ -225,6 +249,31 @@ static void motor_start_pwm(void)
   printf("pwm_out\n");
 }
 
+
+static void motor_start_rpm_monitor(void)
+{
+  pcnt_config_t pcnt_config = {
+    .unit = PCNT_UNIT,
+    .pulse_gpio_num = RPM_PIN,
+
+    .ctrl_gpio_num = -1, // No pos/neg control pin
+    .channel = PCNT_CHANNEL_0,
+    .pos_mode = PCNT_COUNT_INC, // increase on positive edge
+    .neg_mode = PCNT_COUNT_INC, // increase on negative edge
+    .lctrl_mode = PCNT_MODE_KEEP, // ignore control pin; always count edges
+    .hctrl_mode = PCNT_MODE_KEEP, // ignore control pin; always count edges
+
+    .counter_h_lim = 0xffff, // counter limits
+    .counter_l_lim = 0, // counter limits
+  };
+
+  pcnt_unit_config(&pcnt_config);
+  
+  pcnt_set_filter_value(PCNT_UNIT, 1); // ignore pulses shorter than x clock edges
+  pcnt_filter_enable(PCNT_UNIT);
+  
+  pcnt_counter_resume(PCNT_UNIT);
+}
 
 float motor_spk_to_rpm(int sec)
 {
