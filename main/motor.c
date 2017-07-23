@@ -78,7 +78,7 @@ xSemaphoreHandle _pwm_lock;
 
 static uint32_t motor_us = signal_lo_us;
 static uint32_t motor_rpm_setpoint = 0;
-static bool motor_is_manual = true;
+static bool motor_is_manual = false;
 
 bool debug_mot = false;
 
@@ -92,8 +92,11 @@ void motor_task(void *parm)
   motor_start_pwm();
   motor_start_rpm_monitor();
   
-  motor_us(signal_lo_us);
-  vTaskDelay(100 / portTICK_RATE_MS);
+  // Dwell low for a moment to calibrate the speed controller
+  // Can't wait to use the three phase controller
+  //
+  motor_set_us(signal_lo_us);
+  vTaskDelay(500 / portTICK_RATE_MS);
   
   pid_set(100, 0.028, 0.025, 0.005);
 
@@ -106,17 +109,25 @@ void motor_task(void *parm)
     pcnt_get_counter_value(PCNT_UNIT, &pole_count);
     pcnt_counter_clear(PCNT_UNIT);
     
+    // motor
     uint16_t rpm = pole_count * /*1000/60ms=*/(float)(1000.0/INTV_MS) * 60 / MOTOR_POLES;
     
     if (motor_is_manual)
       continue;
     
+    if (motor_rpm_setpoint == 0)
+    {
+      motor_set_us(signal_lo_us);
+      continue;
+    }
+
     float pid_out = pid_calc(motor_rpm_setpoint, rpm);
 
     // How much difference should we make to the output?
     int16_t change_us = round(pid_out * (float)SPEED_CHANGE_UNIT);
     motor_us += change_us;
 
+    // Bound the values out
     if (motor_us > signal_hi_us)
     {
       motor_us = signal_hi_us;
@@ -131,18 +142,11 @@ void motor_task(void *parm)
       motor_set_us(motor_us);
     }
     
-    //TODO: Tune the PID
-    
-    // static int8_t skip = 10;
-    // if(skip-- < 0)
-    // {
     if (debug_mot)
     {
       uint32_t val = READ_PERI_REG(LEDC_LSTIMER0_VALUE_REG);
       printf("pwm: RPM %4u  SET %4u ### pid %4.2f ### us %4u ### tmr %08x\n", rpm, motor_rpm_setpoint, pid_out, motor_us, val);
     }
-    //   skip = 10;
-    // }
   }
 }
 
@@ -156,31 +160,49 @@ void motor_setManual(bool manual)
   }
 }
 
-void motor_setPace_KmS(int km_p_sec)
+void motor_setPace_SpKM(int sec_p_km)
 {
-  if (km_p_sec == 0)
+  if (sec_p_km == 0)
   {
     printf("pwm: stop\n");
-    motor_rpm_setpoint = 0;
+    motor_setRPM(0);
     return;
   }
   
-  printf("pwm: Updating speed: %d\n", km_p_sec);
-  float rpm_setpoint = motor_spk_to_rpm(km_p_sec);
+  if (sec_p_km < 210)
+  {
+    // 3:30/km which is threshold uncomfortable but within capability of a sprint
+    // This would be a speed governor.
+    sec_p_km = 210;
+  }
+  
+  printf("pwm: Updating speed: %d\n", sec_p_km);
+  float rpm_setpoint = motor_spk_to_rpm(sec_p_km);
   
   printf("pwm: setpoint %.0f\n", rpm_setpoint);
-  motor_rpm_setpoint = (uint32_t)rpm_setpoint;
+  motor_setRPM(rpm_setpoint);
 }
 
 void motor_setRPM(int RPM)
 {
+  // bound upper value for safety
+  //
+  // mot: 198s/km = 317.29 WRPM
+  // mot: 4306.14 RPM
+  // 3:30 - 4306.140137
+
+  if (RPM > 4306)
+    RPM = 4306;
+    
   motor_rpm_setpoint = RPM;
 }
 
 void motor_set_us(int us)
 {
+  motor_us = us;
+  
   uint32_t ticks = motor_us_to_ticks(us);
-  printf("pwm: writing %u us; %u ticks\n", us, ticks);
+  // printf("pwm: writing %u us; %u ticks\n", us, ticks);
   
   WRITE_PERI_REG(LEDC_LSCH0_DUTY_REG, ticks << 4);
   WRITE_PERI_REG (LEDC_LSCH0_CONF1_REG, PWM_CONF1_DUTY_START_b);

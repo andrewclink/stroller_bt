@@ -112,7 +112,7 @@ esp_gatt_status_t stroller_didWriteValue(ble_gatt_service_t *svc, ble_gatt_char_
       speed = *buf++;
       
       // Update the motor module
-      motor_setPace_KmS(speed);
+      motor_setPace_SpKM(speed);
       
       return ESP_GATT_OK;
     }

@@ -140,7 +140,9 @@ extern bool debug_mot;
         
         
         
-        default: break;
+        default: 
+          printf("term error\n");
+        break;
         
       }
       

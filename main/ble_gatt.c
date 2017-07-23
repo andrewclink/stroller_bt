@@ -532,10 +532,10 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
         
       
       // Send response
-      // This was allocating a 600 byte payload.
+      // This annoyingly allocates a 600 byte payload.
       if (param->write.need_rsp)
       {
-        esp_gatt_rsp_t *gatt_rsp = (esp_gatt_rsp_t *)malloc(sizeof(esp_gatt_rsp_t) - ESP_GATT_MAX_ATTR_LEN + param->write.len);
+        esp_gatt_rsp_t *gatt_rsp = (esp_gatt_rsp_t *)malloc(sizeof(esp_gatt_rsp_t));
         gatt_rsp->attr_value.len = len;
         gatt_rsp->attr_value.handle = param->write.handle;
         gatt_rsp->attr_value.offset = param->write.offset;
