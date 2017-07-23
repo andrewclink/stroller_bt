@@ -28,7 +28,7 @@
 #define pwm_ch 0
 #define timer_bitwidth 12
 #define timer_ticks  (1 << 12)
-#define signal_lo_us 1250
+#define signal_lo_us 1200
 #define signal_hi_us 1900
 
 xSemaphoreHandle _pwm_lock;
@@ -70,6 +70,7 @@ xSemaphoreHandle _pwm_lock;
 
 static uint32_t motor_us = signal_lo_us  + 500;
 static uint32_t motor_rpm_setpoint = 0;
+static bool motor_is_manual = false;
 
 
 static void motor_start_pwm(void);
@@ -79,31 +80,17 @@ static int motor_us_to_ticks(int usec);
 void motor_task(void *parm)
 {
   motor_start_pwm();
-  vTaskDelay(4000  / portTICK_RATE_MS);
+  // vTaskDelay(4000  / portTICK_RATE_MS);
   
-  pid_set(40, 0.028, -0.025, 0.005);
+  pid_set(100, 0.028, 0.025, 0.005);
 
-#if 0
-  int ticks = 1024;
-  for(;;)
-  {
-    vTaskDelay(1000  / portTICK_RATE_MS);
-    
-    ticks += 100;
-    if (ticks > 20000)
-      ticks = 0;
-    
-    printf("ticks: %u\n", ticks);
-    WRITE_PERI_REG(LEDC_LSCH0_DUTY_REG, ticks << 4);
-    WRITE_PERI_REG (LEDC_LSCH0_CONF1_REG, PWM_CONF1_DUTY_START_b);
-    (*((volatile uint32_t *)ETS_UNCACHED_ADDR(LEDC_LSCH0_CONF0_REG))) |= PWM_CONF0_PARA_UP_b;
-  }
-
-#else
   for(;;)
   {
     vTaskDelay(100  / portTICK_RATE_MS);
     
+    if (motor_is_manual)
+      continue;
+      
     int rpm = /* get current rpm */ 800;
     
     float pid_out = pid_calc(motor_rpm_setpoint, rpm);
@@ -126,6 +113,7 @@ void motor_task(void *parm)
       motor_set_us(motor_us);
     }
     
+    //TODO: Tune the PID
     
     // static int8_t skip = 10;
     // if(skip-- < 0)
@@ -137,11 +125,27 @@ void motor_task(void *parm)
     //   skip = 10;
     // }
   }
-  #endif
+}
+
+void motor_setManual(bool manual)
+{
+  motor_is_manual = manual;
+
+  if (!manual)
+  {
+    pid_resetstate();
+  }
 }
 
 void motor_setPace_KmS(int km_p_sec)
 {
+  if (km_p_sec == 0)
+  {
+    printf("pwm: stop\n");
+    motor_rpm_setpoint = 0;
+    return;
+  }
+  
   printf("pwm: Updating speed: %d\n", km_p_sec);
   float rpm_setpoint = motor_spk_to_rpm(km_p_sec);
   
@@ -196,7 +200,7 @@ static void motor_start_pwm(void)
   // Setup channel
   WRITE_PERI_REG (LEDC_LSCH0_CONF0_REG, PWM_CONF0_PARA_UP_b | PMW_CONF0_IDLE_HIGH_b | PWM_CONF0_OUT_EN_b | (0 << PWM_CONF0_TIMER_LS_SEL_bs));
   WRITE_PERI_REG (LEDC_LSCH0_HPOINT_REG, 0); // Signal pulse starts at reset point
-  WRITE_PERI_REG (LEDC_LSCH0_DUTY_REG, 1024); // TODO: Calculate below; should start at zero
+  WRITE_PERI_REG (LEDC_LSCH0_DUTY_REG, motor_us_to_ticks(signal_lo_us)); // TODO: Calculate below; should start at zero
   
   WRITE_PERI_REG (LEDC_LSCH0_CONF1_REG, PWM_CONF1_DUTY_START_b);
 

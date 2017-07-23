@@ -14,6 +14,14 @@ float pid_kd = 0.001;
 float pid_ki = 0.0001;
 
 
+void pid_get(uint16_t *delta_ms, float * kp, float * ki, float * kd)
+{
+  if (delta_ms) *delta_ms = pid_interval_ms;
+  if (kp) *kp = pid_kp;
+  if (ki) *ki = pid_ki;
+  if (kd) *kd = pid_kd;
+}
+
 void pid_set(uint16_t delta_ms, float kp, float ki, float kd)
 {
   pid_interval_ms = delta_ms;
@@ -29,6 +37,13 @@ void pid_set(uint16_t delta_ms, float kp, float ki, float kd)
   
   printf("Kp= %.5f; Ki= %.5f; Kd= %.5f\n", pid_kp, pid_ki, pid_kd);
   
+}
+
+void pid_resetstate(void)
+{
+  pid_integration = 0; // integrated error
+  pid_last_error  = 0; // derived error
+  pid_last_actual = 0; // derivative on measurement
 }
 
 
@@ -54,9 +69,11 @@ float pid_calc(float setpoint, float actual)
   
   // Integrate
   pid_integration += (pid_ki * error);
-  if (pid_integration > PID_MAX) pid_integration = PID_MAX;
+  if (pid_integration > PID_MAX) 
+    pid_integration = PID_MAX;
   else
-  if (pid_integration < PID_MIN) pid_integration = PID_MIN;
+  if (pid_integration < PID_MIN) 
+    pid_integration = PID_MIN;
   
   
   // Derive
@@ -67,14 +84,13 @@ float pid_calc(float setpoint, float actual)
   float proportion = pid_kp * error;
   float d = pid_kd*derivative;
   
-#if 0
-  static int8_t skip = 10;
-  if(skip-- < 0)
-  {
+  // static int8_t skip = 10;
+  // if(skip-- < 0)
+  //{
     printf("p %4.2f i %4.2f d %4.2f\n", proportion, pid_integration, d);
-    skip = 10;
-  }
-#endif
+  //  skip = 10;
+  // }
+
   
   // Calculate p,i,d
 	output = proportion + pid_integration - d;
@@ -82,6 +98,5 @@ float pid_calc(float setpoint, float actual)
   else
   if (output < PID_MIN) output = PID_MIN;
 
-
- return output;
+  return output;
 }

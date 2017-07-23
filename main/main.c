@@ -18,6 +18,7 @@
 #include "ble_gatt.h"
 
 #include "motor.h"
+#include "term.h"
 
 #define INF(...) ESP_LOGI("main", __VA_ARGS__)
 
@@ -167,5 +168,7 @@ void app_main()
     // Start Motor Monitor
     xTaskCreate(&motor_task, "motor_t", 2048, NULL, 6, &motor_task_h);
     
+    //A uart read/write example without event queue;
+    xTaskCreate(term_task, "term_task", 2048, NULL, 1, NULL);
     return;
 }

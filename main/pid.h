@@ -12,7 +12,12 @@
 // #define Kd  0.001
 
 
+void pid_get(uint16_t *delta_ms, float * kp, float * ki, float * kd);
+
 void pid_set(uint16_t delta_ms, float kp, float ki, float kd);
+
+// Avoid jump on switch from manual override
+void pid_resetstate(void);
 
 float pid_calc(float setpoint, float actual);
 
