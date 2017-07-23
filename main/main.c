@@ -108,7 +108,7 @@ esp_gatt_status_t stroller_didWriteValue(ble_gatt_service_t *svc, ble_gatt_char_
     case speed_uuid:
     {
       uint16_t * buf = (uint16_t*)value;
-      *buf++ = speed;
+      speed = *buf++;
       
       // Update the motor module
       motor_setPace_KmS(speed);

@@ -13,9 +13,13 @@
 
 #include "driver/gpio.h"
 
+#include "motor.h"
+#include "pid.h"
+
 #define wheel_circ_mm (304 * M_PI)
 #define wheel_pulley_teeth 190
 #define motor_pulley_teeth 14
+#define SPEED_CHANGE_UNIT 1
 
 #define REFRESH_USEC         20000
 #define REFRESH_HZ           (1000000 / REFRESH_USEC)
@@ -48,7 +52,7 @@ xSemaphoreHandle _pwm_lock;
 #define TIMER_LS_RANGE_bs         (0) // 4 bits; "The counter range is (0..2 ** n); the maximum bit width for counter is 20."
                                 
 #define TIMER_LS_DIV_s(_x_)       (_x_ << TIMER_LS_DIV_bs)
-#define TIMER_LS_RANGE_s(_x_)     (_x_ << TIMER_LS_RANGE_bs)
+#define TIMER_LS_RANGE_s(_x_)     ((_x_ << TIMER_LS_RANGE_bs) & 0b11111)
 
 #define PWM_CONF0_PARA_UP_b       (1 << 4) // Strobe to update point and duty values
 #define PMW_CONF0_IDLE_HIGH_b     (1 << 3)
@@ -64,6 +68,9 @@ xSemaphoreHandle _pwm_lock;
 #define PWM_CONF1_SCALE_bs        (0)
 
 
+static uint32_t motor_us = signal_lo_us  + 500;
+static uint32_t motor_rpm_setpoint = 0;
+
 
 static void motor_start_pwm(void);
 static float motor_spk_to_rpm(int sec);
@@ -72,10 +79,46 @@ static int motor_us_to_ticks(int usec);
 void motor_task(void *parm)
 {
   motor_start_pwm();
+  vTaskDelay(4000  / portTICK_RATE_MS);
+  
+  pid_set(40, 0.028, -0.025, 0.005);
 
   for(;;)
   {
-    vTaskDelay(100);    
+    vTaskDelay(100  / portTICK_RATE_MS);
+    
+    int rpm = /* get current rpm */ 800;
+    
+    float pid_out = pid_calc(motor_rpm_setpoint, rpm);
+
+    // How much difference should we make to the output?
+    int16_t change_us = round(pid_out * (float)SPEED_CHANGE_UNIT);
+    motor_us += change_us;
+
+    if (motor_us > signal_hi_us)
+    {
+      motor_us = signal_hi_us;
+    }
+    else
+    if (motor_us < signal_lo_us)
+    {
+      motor_us = signal_lo_us;
+    }
+    else
+    {
+      motor_set_us(motor_us);
+    }
+    
+    
+    // static int8_t skip = 10;
+    // if(skip-- < 0)
+    // {
+    
+    uint32_t val = READ_PERI_REG(LEDC_LSTIMER0_VALUE_REG);
+    
+    printf("pwm: RPM %4u  SET %4u ### pid %4.2f ### us %4u ### tmr %08x\n", rpm, motor_rpm_setpoint, pid_out, motor_us, val);
+    //   skip = 10;
+    // }
   }
 }
 
@@ -85,12 +128,22 @@ void motor_setPace_KmS(int km_p_sec)
   float rpm_setpoint = motor_spk_to_rpm(km_p_sec);
   
   printf("pwm: setpoint %.0f\n", rpm_setpoint);
-  
+  motor_rpm_setpoint = (uint32_t)rpm_setpoint;
 }
 
+void motor_set_us(int us)
+{
+  printf("pwm: writing %u us\n", us);
+  WRITE_PERI_REG (LEDC_LSCH0_DUTY_REG, motor_us_to_ticks(us)); 
+  
+  uint32_t val = READ_PERI_REG(LEDC_LSCH0_CONF0_REG);
+  WRITE_PERI_REG (LEDC_LSCH0_CONF0_REG, val | PWM_CONF0_PARA_UP_b);
+}
 
 static void motor_start_pwm(void)
 {
+  uint32_t val;
+  
   static bool pwm_timer_started = false;
   if (!pwm_timer_started)
   {
@@ -118,18 +171,28 @@ static void motor_start_pwm(void)
   // Configure LS Timer 0
   WRITE_PERI_REG (LEDC_CONF_REG, LEDC_APB_CLK_SEL);
   WRITE_PERI_REG (LEDC_LSTIMER0_CONF_REG, TIMER_LS_PARA_UP_b | TIMER_LS_SLOW_CLK_b | TIMER_LS_DIV_s(div_num) | TIMER_LS_RANGE_s(timer_bitwidth));
-  WRITE_PERI_REG (LEDC_LSTIMER0_CONF_REG, TIMER_LS_RESET_b);
+  //WRITE_PERI_REG (LEDC_LSTIMER0_CONF_REG, TIMER_LS_RESET_b);
 
   
   // Setup channel
   WRITE_PERI_REG (LEDC_LSCH0_CONF0_REG, PWM_CONF0_PARA_UP_b | PMW_CONF0_IDLE_HIGH_b | PWM_CONF0_OUT_EN_b | (0 << PWM_CONF0_TIMER_LS_SEL_bs));
   WRITE_PERI_REG (LEDC_LSCH0_HPOINT_REG, 0); // Signal pulse starts at reset point
-  WRITE_PERI_REG (LEDC_LSCH0_DUTY_REG, motor_us_to_ticks(signal_lo_us)); // TODO: Calculate below; should start at zero
+  WRITE_PERI_REG (LEDC_LSCH0_DUTY_REG, 1024); // TODO: Calculate below; should start at zero
   
-  WRITE_PERI_REG (LEDC_LSCH0_CONF0_REG, 1 << 31);
   WRITE_PERI_REG (LEDC_LSCH0_CONF1_REG, PWM_CONF1_DUTY_START_b);
+
+
+  val = READ_PERI_REG(LEDC_LSTIMER0_CONF_REG);
+  printf("pwm: LEDC_LSTIMER0_CONF_REG: %08x\n", val);
+  val = READ_PERI_REG(LEDC_LSCH0_CONF0_REG);
+  printf("pwm: LEDC_LSCH0_CONF0_REG: %08x\n", val);
+  val = READ_PERI_REG(LEDC_LSCH0_CONF1_REG);
+  printf("pwm: LEDC_LSCH0_CONF1_REG: %08x\n", val);
+  val = READ_PERI_REG(LEDC_LSCH0_DUTY_REG);
+  printf("pwm: LEDC_LSCH0_DUTY_REG:  %08x\n", val);
   
-  //TODO: LEDC_LS_SIG_OUT0_IDX + pwm_ch seems wrong. See gpio_sig_map.h - LEDC_LS_SIG_OUT0_IDX = 79
+
+  // Connect to pin
   PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[signal_pin], PIN_FUNC_GPIO);
   gpio_set_direction(signal_pin, GPIO_MODE_OUTPUT);
   gpio_matrix_out(signal_pin, LEDC_LS_SIG_OUT0_IDX + pwm_ch, false /*out invert*/, false /*invert output enable*/);
