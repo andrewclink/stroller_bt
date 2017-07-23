@@ -83,6 +83,23 @@ void motor_task(void *parm)
   
   pid_set(40, 0.028, -0.025, 0.005);
 
+#if 0
+  int ticks = 1024;
+  for(;;)
+  {
+    vTaskDelay(1000  / portTICK_RATE_MS);
+    
+    ticks += 100;
+    if (ticks > 20000)
+      ticks = 0;
+    
+    printf("ticks: %u\n", ticks);
+    WRITE_PERI_REG(LEDC_LSCH0_DUTY_REG, ticks << 4);
+    WRITE_PERI_REG (LEDC_LSCH0_CONF1_REG, PWM_CONF1_DUTY_START_b);
+    (*((volatile uint32_t *)ETS_UNCACHED_ADDR(LEDC_LSCH0_CONF0_REG))) |= PWM_CONF0_PARA_UP_b;
+  }
+
+#else
   for(;;)
   {
     vTaskDelay(100  / portTICK_RATE_MS);
@@ -120,6 +137,7 @@ void motor_task(void *parm)
     //   skip = 10;
     // }
   }
+  #endif
 }
 
 void motor_setPace_KmS(int km_p_sec)
@@ -133,11 +151,12 @@ void motor_setPace_KmS(int km_p_sec)
 
 void motor_set_us(int us)
 {
-  printf("pwm: writing %u us\n", us);
-  WRITE_PERI_REG (LEDC_LSCH0_DUTY_REG, motor_us_to_ticks(us)); 
+  uint32_t ticks = motor_us_to_ticks(us);
+  printf("pwm: writing %u us; %u ticks\n", us, ticks);
   
-  uint32_t val = READ_PERI_REG(LEDC_LSCH0_CONF0_REG);
-  WRITE_PERI_REG (LEDC_LSCH0_CONF0_REG, val | PWM_CONF0_PARA_UP_b);
+  WRITE_PERI_REG(LEDC_LSCH0_DUTY_REG, ticks << 4);
+  WRITE_PERI_REG (LEDC_LSCH0_CONF1_REG, PWM_CONF1_DUTY_START_b);
+  (*((volatile uint32_t *)ETS_UNCACHED_ADDR(LEDC_LSCH0_CONF0_REG))) |= PWM_CONF0_PARA_UP_b;
 }
 
 static void motor_start_pwm(void)
@@ -228,5 +247,5 @@ float motor_spk_to_rpm(int sec)
 int motor_us_to_ticks(int usec)
 {
   // Since we have an FPU it is acceptable to cast to float here.
-  return (int)((float)usec / ((float)REFRESH_USEC / (float)timer_bitwidth));   
+  return (int)((float)usec / ((float)REFRESH_USEC / (float)pow(2, timer_bitwidth)));   
 }
