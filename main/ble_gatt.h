@@ -26,23 +26,26 @@ typedef struct ble_gatt_char_s {
   
   esp_bt_uuid_t descr_uuid; // Client Characteristic Configuration Descriptor (added to the characteristic)
 
-  void * write_buffer;
-  uint16_t write_pos;
+  void * write_buffer; // TODO
+  uint16_t write_pos;  // TODO
 
   struct ble_gatt_char_s * next;
 } ble_gatt_char_t;
 
 
+
 // Characteristic read/write/write_exec callback
 //
-typedef esp_gatt_status_t (*ble_gatt_char_cb_t)(esp_gatts_cb_event_t event, ble_gatt_char_t * characteristic, esp_ble_gatts_cb_param_t *param);
+struct ble_gatt_service_s;
+typedef esp_gatt_status_t (*ble_gatt_char_cb_t)(struct ble_gatt_service_s *svc, ble_gatt_char_t * characteristic, void * buf, uint16_t *len);
 
 
 // Service entry type
 //
 typedef struct ble_gatt_service_s {
-  ble_gatt_char_cb_t callback; // Assigned by us to handle read/write to characteristics
-  uint8_t  ble_service_id;   // Assigned by us in the order registered. Maybe should be called app_id (but that exists too?)
+  ble_gatt_char_cb_t didReadCB;  // Assigned by us to handle read/write to characteristics
+  ble_gatt_char_cb_t didWriteCB; // Assigned by us to handle read/write to characteristics
+  uint8_t  ble_service_id;       // Assigned by us in the order registered. Maybe should be called app_id (but that exists too?)
   uint16_t gatts_if;
   uint16_t app_id; // Is this used?
   uint16_t conn_id;
@@ -64,7 +67,7 @@ void ble_gatt_start(void);
 
 // Create a service entry and register it for activation upon calling +ble_gatt_start+
 //
-ble_gatt_service_t * ble_gatt_service_create(const uint8_t *uuid, int16_t uuid_len, ble_gatt_char_cb_t cb);
+ble_gatt_service_t * ble_gatt_service_create(const uint8_t *uuid, int16_t uuid_len, ble_gatt_char_cb_t didReadCB, ble_gatt_char_cb_t didWriteCB);
 
 // Create a characteristic on a service
 ble_gatt_char_t * ble_gatt_characteristic_create(ble_gatt_service_t * svc, const void *uuid, int16_t uuid_len);

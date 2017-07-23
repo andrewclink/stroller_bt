@@ -45,7 +45,7 @@ static void uuid_set(esp_bt_uuid_t * dest, const void * src, int16_t uuid_len)
   }
 }
 
-ble_gatt_service_t * ble_gatt_service_create(const uint8_t *uuid, int16_t uuid_len, ble_gatt_char_cb_t cb)
+ble_gatt_service_t * ble_gatt_service_create(const uint8_t *uuid, int16_t uuid_len, ble_gatt_char_cb_t didReadCB, ble_gatt_char_cb_t didWriteCB)
 {
   ble_gatt_service_t * svc = malloc(sizeof(ble_gatt_service_t));
   memset(svc, '\0', sizeof(ble_gatt_service_t));
@@ -66,11 +66,14 @@ ble_gatt_service_t * ble_gatt_service_create(const uint8_t *uuid, int16_t uuid_l
     tail->next = svc;
   }
   
-  
-  svc->callback = cb;
+  // Members
+  svc->didReadCB      = didReadCB;
+  svc->didWriteCB     = didWriteCB;
   svc->ble_service_id = service_count++;
   
   // From example; handle now though.
+  // I wonder why unions of structs of structs aren't just wildly popular.
+  //
   svc->service_id.is_primary = true;
   svc->service_id.id.inst_id = 0x00;
   uuid_set(&svc->service_id.id.uuid, uuid, uuid_len);
@@ -155,7 +158,7 @@ ble_gatt_char_t * ble_gatt_get_char_by_uuid(ble_gatt_service_t * svc, esp_bt_uui
   {
     case ESP_UUID_LEN_16:  printf("find  16 %04x\n", uuid->uuid.uuid16); break;
     case ESP_UUID_LEN_32:  printf("find  32 %08x\n", uuid->uuid.uuid32); break;
-    case ESP_UUID_LEN_128: printf("find 132 %08x\n", uuid->uuid.uuid32); break;
+    case ESP_UUID_LEN_128: printf("find 128 %08x\n", uuid->uuid.uuid32); break;
     default: ESP_LOGE(LOGT, "uuid len %u\n", uuid->len);
   }
   
@@ -175,7 +178,7 @@ ble_gatt_char_t * ble_gatt_get_char_by_uuid(ble_gatt_service_t * svc, esp_bt_uui
       {
         case ESP_UUID_LEN_16:  printf("char  16 %04x\n", cha->uuid.uuid.uuid16); break;
         case ESP_UUID_LEN_32:  printf("char  32 %08x\n", cha->uuid.uuid.uuid32); break;
-        case ESP_UUID_LEN_128: printf("char 132 %08x\n", cha->uuid.uuid.uuid32); break;
+        case ESP_UUID_LEN_128: printf("char 128 %08x\n", cha->uuid.uuid.uuid32); break;
         default: ESP_LOGE(LOGT, "uuid len %u\n", cha->uuid.len);
       }
       
@@ -249,6 +252,8 @@ ble_gatt_char_t * ble_gatt_get_char_by_handle(ble_gatt_service_t * svc, uint16_t
 
 void ble_gatt_start(void)
 {
+  esp_ble_gatts_register_callback(gatt_event_handler);
+  
   ble_gatt_service_t * svc = service_head;
   while(svc != NULL)
   {
@@ -261,6 +266,39 @@ void ble_gatt_start(void)
 }
 
 
+void gatt_register_characteristic(ble_gatt_service_t * svc, ble_gatt_char_t * cha)
+{
+  if (NULL == cha)
+    return;
+  
+  printf("Adding Characteristic %08x\n", cha->uuid.uuid.uuid32);
+
+/* this is obviously on the stack; it won't hang around.
+  esp_attr_value_t value_attr = {
+    .attr_max_len = 1,                      //  attribute max value length    
+    .attr_len = 1,                          //  attribute current value length
+    .attr_value = &value_holder                      // cannot be null
+  }; 
+*/
+  
+  esp_err_t ret = esp_ble_gatts_add_char(
+    svc->service_handle,
+    &cha->uuid,
+    cha->perm,
+    cha->properties, //
+    NULL, //&value_attr, // value (initial?) (can be NULL)
+    NULL  // attribute response control byte
+  );
+    
+  if (ret == ESP_OK)
+  {
+    ESP_LOGI(LOGT, "esp_ble_gatts_add_char: %d\n", ret);
+  }
+  else
+  {
+    ESP_LOGE(LOGT, "esp_ble_gatts_add_char: %d\n", ret);
+  }
+}
 
 // Central GATT Event handler. This will dispatch to different service callbacks based on which gatts_if is passed in.
 //
@@ -340,44 +378,13 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
         ESP_LOGE(LOGT, "esp_ble_gatts_start_service: %d\n", ret);
       }
       
-      // Add all characteristics to the service
+      // Add the first characteristic to the service.
+      // Each will be added when the appropriate callback is received.
+      // This allows us to tolerate Espressif's poorly thought out API
+      // with regaurd to characteristic descriptions.
       //
       ble_gatt_char_t *cha = svc->characteristics;
-      while(NULL != cha)
-      {
-        printf("Adding Characteristic %08x\n", cha->uuid.uuid.uuid32);
-        
-        esp_attr_value_t value_attr = {
-          .attr_max_len = 1,                      /*!<  attribute max value length */     
-          .attr_len = 1,                          /*!<  attribute current value length */ 
-          .attr_value = &value_holder                      // cannot be null
-        }; 
-        
-        esp_err_t ret = esp_ble_gatts_add_char(
-          svc->service_handle,
-          &cha->uuid,
-          cha->perm,
-          cha->properties, //
-          &value_attr, // value (initial?) (can be NULL)
-          NULL  // attribute response control byte
-        );
-          
-        if (ret == ESP_OK)
-        {
-          ESP_LOGI(LOGT, "esp_ble_gatts_add_char: %d\n", ret);
-        }
-        else
-        {
-          ESP_LOGE(LOGT, "esp_ble_gatts_add_char: %d\n", ret);
-        }
-          
-        cha = cha->next;
-      }
-        
-      // esp_ble_gatts_add_char(gl_profile_tab[PROFILE_B_APP_ID].service_handle, &gl_profile_tab[PROFILE_B_APP_ID].char_uuid,
-      //                        ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-      //                        ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-      //                        NULL, NULL);
+      gatt_register_characteristic(svc, cha);
       break;
     }
     
@@ -403,35 +410,94 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       cha->descr_uuid.len = ESP_UUID_LEN_16;
       cha->descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
 
-      // This gets added to the last characteristic added, which is stupid.
+      // Adding a char description adds to the last characteristic added, which is stupid.
+      // If we're adding a descriptor to this cha, we need to do it now. Otherwise
+      // start adding the next characteristic.
       //
-      /*
-      esp_ble_gatts_add_char_descr(svc->service_handle, &cha->descr_uuid,
-                                   ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, // descriptor access permission
-                                   NULL, // char descriptor value
-                                   NULL  // attribute response control byte
-                                  );
-      */
+      if (false)
+      {
+        esp_ble_gatts_add_char_descr(svc->service_handle, &cha->descr_uuid,
+                                     ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, // descriptor access permission
+                                     NULL, // char descriptor value
+                                     NULL  // attribute response control byte
+                                    );
+      }
+      else
+      {
+        gatt_register_characteristic(svc, cha->next);
+      }
       break;
     }
         
+
+    // Received after a characteristic descriptor was added
+    // We need to use this oportunity to either add more characteristic
+    // descriptors or to add the next characteristic
+    //
+    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
+    {
+      ESP_LOGI(LOGT, "ADD_DESCR_EVT, status %d, attr_handle %d, service_handle %d\n",
+               param->add_char_descr.status, param->add_char_descr.attr_handle, param->add_char_descr.service_handle);
+
+     
+      //TODO! The uuid passed here is not, as the docs say, the characteristic UUID, but rather the descriptor UUID!
+               
+     
+     
+      ble_gatt_char_t * cha = ble_gatt_get_char_by_uuid(svc, &param->add_char_descr.char_uuid);
+      if (NULL == cha)
+      {
+        ESP_LOGW(LOGT, "Could not find cha for UUID %p", &param->add_char_descr.char_uuid);
+        return;
+      }
+      
+      
+      if (false /*more descriptors to add */)
+      {
+        /* e.g. */
+        esp_ble_gatts_add_char_descr(svc->service_handle, &cha->descr_uuid,
+                                     ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, // descriptor access permission
+                                     NULL, // char descriptor value
+                                     NULL  // attribute response control byte
+                                    );
+      }
+      else
+      {
+        gatt_register_characteristic(svc, cha->next);
+      }
+
+      break;
+    }
+      
           
     case ESP_GATTS_READ_EVT: 
     {
       ESP_LOGI(LOGT, "GATT_READ_EVT, conn_id %d, trans_id %d, handle %d\n", param->read.conn_id, param->read.trans_id, param->read.handle);
 
-      // TODO: dispatch read/write callback properly                    
+      // esp_gatt_rsp allocates 600 bytes.
+      // They also stuck the fixed-size buffer on the front of the struct 
+      // and copy it so many times I can't even cast a trimmed down buffer.
+      //
+      // TODO: Clean up the espressif sources! They're terrible!
+      // TODO: Add length field to response
+      // TODO: Modify  everything in btc_gatts.c dealing with the arg for BTC_GATTS_ACT_SEND_RESPONSE
+      // TODO: Modify  btc_gatts_arg_deep_copy
+      // TODO: Modify  btc_gatts_arg_deep_free, etc
+      // 
 
-      esp_gatt_rsp_t rsp;
+
+      ble_gatt_char_t * cha = ble_gatt_get_char_by_handle(svc, param->read.handle);
+      
+      int len = 0;
+
+      esp_gatt_rsp_t rsp; // 600+ bytes to be memcpy'd several times
       memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
       rsp.attr_value.handle = param->read.handle;
-      rsp.attr_value.len = 4;
-      rsp.attr_value.value[0] = 0xde;
-      rsp.attr_value.value[1] = 0xed;
-      rsp.attr_value.value[2] = 0xbe;
-      rsp.attr_value.value[3] = 0xef;
-      esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
-                                  ESP_GATT_OK, &rsp);
+
+      esp_gatt_status_t status = svc->didReadCB(svc, cha, &rsp.attr_value.value, &rsp.attr_value.len);
+      
+      esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, status, &rsp);
+
       break;
     }
   
@@ -441,25 +507,36 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       //           param->write.conn_id, param->write.trans_id, param->write.handle, param->write.need_rsp, param->write.is_prep);
       // ESP_LOGI(LOGT, "                value len %d, value %08x\n", param->write.len, *(uint32_t *)param->write.value);
       
-      //TODO: Handle the (possibly buffered) write
-      //example_write_event_env(gatts_if, &b_prepare_write_env, param);
-      
       // Call the registered callback
       // Get the relavent characteristic
       ble_gatt_char_t * cha = ble_gatt_get_char_by_handle(svc, param->write.handle);
-      //ESP_LOGI(LOGT, "Got characteristic for write: %p", cha);
-      printf("wr %p\n", cha);
+      
+      int len;
+      esp_gatt_status_t status;
+      
+      if (NULL == cha)
+      {
+        ESP_LOGE(LOGT, "NULL cha in write CB");
+        status = ESP_GATT_NOT_FOUND;
+      }
+      else
+      {
+        // len in:  length of written paylod
+        // len out: length written
+        // TODO: Calculate offset of value based on location of pointer out?
+        //
+        len = param->write.len;
+        status = svc->didWriteCB(svc, cha, param->write.value, &len);
+      }
 
-//      esp_gatt_status_t status = svc->callback(cha, param)
         
-      esp_gatt_status_t status = ESP_GATT_OK;
       
       // Send response
       // This was allocating a 600 byte payload.
       if (param->write.need_rsp)
       {
         esp_gatt_rsp_t *gatt_rsp = (esp_gatt_rsp_t *)malloc(sizeof(esp_gatt_rsp_t) - ESP_GATT_MAX_ATTR_LEN + param->write.len);
-        gatt_rsp->attr_value.len = param->write.len;
+        gatt_rsp->attr_value.len = len;
         gatt_rsp->attr_value.handle = param->write.handle;
         gatt_rsp->attr_value.offset = param->write.offset;
         gatt_rsp->attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
@@ -489,10 +566,7 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       
 
 
-    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
-      ESP_LOGI(LOGT, "ADD_DESCR_EVT, status %d, attr_handle %d, service_handle %d\n",
-               param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-      break;
+
 
 
 

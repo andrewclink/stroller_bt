@@ -59,6 +59,50 @@ esp_ble_adv_data_t adv_data = {
 };
 
 
+// Enable the bt stack and whatnot. Could/should take the config struct in and
+// error check, etc.
+void gap_start(void)
+{
+  // Configure BLE
+  esp_err_t ret;
+
+  esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+  ret = esp_bt_controller_init(&bt_cfg);
+  if (ret) 
+  {
+      ESP_LOGE(PROJ, "%s initialize controller failed\n", __func__);
+      return;
+  }
+
+
+  ret = esp_bt_controller_enable(ESP_BT_MODE_BTDM);
+  if (ret) 
+  {
+      ESP_LOGE(PROJ, "%s enable controller failed\n", __func__);
+      return;
+  }
+  
+  
+  ret = esp_bluedroid_init();
+  if (ret) 
+  {
+      ESP_LOGE(PROJ, "%s init bluetooth failed\n", __func__);
+      return;
+  }
+  ret = esp_bluedroid_enable();
+  if (ret) 
+  {
+      ESP_LOGE(PROJ, "%s enable bluetooth failed\n", __func__);
+      return;
+  }
+  
+
+  esp_ble_gap_config_adv_data(&adv_data);
+
+  esp_ble_gap_register_callback(gap_event_handler);  
+}
+
+
 // Configures advertising data in the BT stack
 void gap_start_advertising(void)
 {

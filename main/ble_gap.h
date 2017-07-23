@@ -12,6 +12,11 @@ extern esp_ble_adv_params_t adv_params;
 // Advertising data; should probably be refactored somehow.
 extern esp_ble_adv_data_t adv_data;
 
+
+// Start the bluetooth stack
+//
+void gap_start(void);
+
 // Starts the process of configuring BT stack advertising data
 // so that advertising can begin in the callback
 //

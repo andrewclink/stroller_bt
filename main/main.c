@@ -17,6 +17,8 @@
 #include "ble_gap.h"
 #include "ble_gatt.h"
 
+#include "motor.h"
+
 #define INF(...) ESP_LOGI("main", __VA_ARGS__)
 
 
@@ -37,84 +39,133 @@ const uint8_t stroller_service_uuid[16] = {
 };
 #endif
 
-static const uint16_t speed_uuid = 0x1419; // Speed
-static const uint16_t sa_uuid    = 0x1428; // Steering Angle
-static const uint16_t sh_uuid    = 0x1429; // Steering Home Control Point
+enum {
+  speed_uuid             = 0x1419, // Speed
+  steering_angle_uuid    = 0x1428, // Steering Angle
+  steering_home_uuid     = 0x1429, // Steering Home Control Point
+};
 
 
+static TaskHandle_t motor_task_h;
 
-esp_gatt_status_t stroller_cb(esp_gatts_cb_event_t event, ble_gatt_char_t * characteristic, esp_ble_gatts_cb_param_t *param)
+static volatile uint16_t speed = 0;
+static volatile uint16_t tmpangle = 0xffff / 2;
+
+
+esp_gatt_status_t stroller_didRequestValue(ble_gatt_service_t *svc, ble_gatt_char_t * characteristic, void * buffer, uint16_t *len)
+{
+  uint16_t * buf = (uint16_t*)buffer;
+  
+  // Write back the client
+  //
+  switch((uint16_t)characteristic->uuid.uuid.uuid16)
+  {
+    case speed_uuid:
+    {
+      *buf++ = speed;
+      *len = 2;
+      
+      return ESP_GATT_OK;
+    }
+    
+    case steering_home_uuid:
+    {
+      return ESP_GATT_READ_NOT_PERMIT;
+    }
+    
+    case steering_angle_uuid:
+    {
+      *buf++ = tmpangle;
+      *len = 2;
+      
+      return ESP_GATT_OK;
+    }
+    
+    default:
+      return ESP_GATT_NOT_FOUND;
+  }
+  
+}
+
+esp_gatt_status_t stroller_didWriteValue(ble_gatt_service_t *svc, ble_gatt_char_t * characteristic, void * value, uint16_t *len)
 {
   // Handle write payload
-  return ESP_GATT_OK;
+  //
+  // If less than +len+ bytes are handled, the value +len+ points to should be updated
+  //
+  
+  // printf("OUT ");
+  // for(int i=0; i<*len; i++)
+  // {
+  //   printf("%02x ", buf[i]);
+  // }
+  // printf("\n");
+  
+  
+  
+  switch((uint16_t)characteristic->uuid.uuid.uuid16)
+  {
+    case speed_uuid:
+    {
+      uint16_t * buf = (uint16_t*)value;
+      *buf++ = speed;
+      
+      // Update the motor module
+      motor_setPace_KmS(speed);
+      
+      return ESP_GATT_OK;
+    }
+    
+
+    
+    case steering_angle_uuid:
+    {
+      uint16_t * buf = (uint16_t*)value;
+      tmpangle = *buf++;
+      
+      return ESP_GATT_OK;
+    }
+    
+    
+    case steering_home_uuid:
+      return ESP_GATT_READ_NOT_PERMIT;
+    
+    default:
+      return ESP_GATT_NOT_FOUND;
+  }
 }
 
 
-void ble_init(void)
-{
-  // Configure BLE
-  esp_err_t ret;
-
-  esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-  ret = esp_bt_controller_init(&bt_cfg);
-  if (ret) 
-  {
-      ESP_LOGE(PROJ, "%s initialize controller failed\n", __func__);
-      return;
-  }
-
-
-  ret = esp_bt_controller_enable(ESP_BT_MODE_BTDM);
-  if (ret) 
-  {
-      ESP_LOGE(PROJ, "%s enable controller failed\n", __func__);
-      return;
-  }
-  
-  
-  ret = esp_bluedroid_init();
-  if (ret) 
-  {
-      ESP_LOGE(PROJ, "%s init bluetooth failed\n", __func__);
-      return;
-  }
-  ret = esp_bluedroid_enable();
-  if (ret) 
-  {
-      ESP_LOGE(PROJ, "%s enable bluetooth failed\n", __func__);
-      return;
-  }
-  
-
-  ESP_LOGI(PROJ, "Config Adv")
-  esp_ble_gap_config_adv_data(&adv_data);
-
-  esp_ble_gatts_register_callback(gatt_event_handler);
-  esp_ble_gap_register_callback(gap_event_handler);  
-}
 
 void app_main()
 {
     printf("Stroller\n");
 
+    uint16_t uuid_tmp;
 
-    ble_init();
-      
     // Create the stroller service & characteristics
-    ble_gatt_service_t * stroller_service = ble_gatt_service_create(stroller_service_uuid, ESP_UUID_LEN_128, stroller_cb);
+    ble_gatt_service_t * stroller_service = 
+      ble_gatt_service_create(stroller_service_uuid, ESP_UUID_LEN_128, stroller_didRequestValue, stroller_didWriteValue);
 
-    ble_gatt_char_t * speed = ble_gatt_characteristic_create(stroller_service, &speed_uuid, ESP_UUID_LEN_16);
+    uuid_tmp = speed_uuid;
+    ble_gatt_char_t * speed = ble_gatt_characteristic_create(stroller_service, &uuid_tmp, ESP_UUID_LEN_16);
     speed->properties = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE;
 
-    ble_gatt_char_t * sa = ble_gatt_characteristic_create(stroller_service, &sa_uuid, ESP_UUID_LEN_16);
+    uuid_tmp = steering_angle_uuid;
+    ble_gatt_char_t * sa = ble_gatt_characteristic_create(stroller_service, &uuid_tmp, ESP_UUID_LEN_16);
     sa->properties = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE_NR;
     
-    ble_gatt_char_t * steering_home = ble_gatt_characteristic_create(stroller_service, &sh_uuid, ESP_UUID_LEN_16);
+    uuid_tmp = steering_home_uuid;
+    ble_gatt_char_t * steering_home = ble_gatt_characteristic_create(stroller_service, &uuid_tmp, ESP_UUID_LEN_16);
     steering_home->perm       = ESP_GATT_PERM_WRITE;
     steering_home->properties = ESP_GATT_CHAR_PROP_BIT_WRITE;
     
     // Start BLE
+    gap_start();
     ble_gatt_start();
+    
+    // Start Motor Monitor
+    xTaskCreate(&motor_task, "motor_t", 2048, NULL, 6, &motor_task_h);
     
     return;
 }
