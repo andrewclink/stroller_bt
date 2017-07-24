@@ -19,6 +19,9 @@ static const uint16_t primary_service_uuid = ESP_GATT_UUID_PRI_SERVICE; // ?
 static const uint16_t character_declaration_uuid = ESP_GATT_UUID_CHAR_DECLARE; //?
 static const uint8_t char_prop_notify = ESP_GATT_CHAR_PROP_BIT_NOTIFY; // ?
 
+ble_gatt_connectionEventHandler connectionEventHandler = NULL;
+
+
 // TODO: Should this go in the GAP? TODO: Should what?
 
 uint8_t value_holder = 0;
@@ -250,8 +253,13 @@ ble_gatt_char_t * ble_gatt_get_char_by_handle(ble_gatt_service_t * svc, uint16_t
 
 
 
-void ble_gatt_start(void)
+void ble_gatt_start(ble_gatt_connectionEventHandler eventHandler)
 {
+  
+  // Store pointer to connection event handler
+  connectionEventHandler = eventHandler;
+  
+  // Register this layer with the esp api (oh yes, there are layers here.)
   esp_ble_gatts_register_callback(gatt_event_handler);
   
   ble_gatt_service_t * svc = service_head;
@@ -511,7 +519,7 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       // Get the relavent characteristic
       ble_gatt_char_t * cha = ble_gatt_get_char_by_handle(svc, param->write.handle);
       
-      int len;
+      uint16_t len;
       esp_gatt_status_t status;
       
       if (NULL == cha)
@@ -576,13 +584,19 @@ void gatt_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_
       break;
       
     case ESP_GATTS_CONNECT_EVT:
-      ESP_LOGI(LOGT, "CONNECT_EVT, conn_id %d, remote %02x:%02x:%02x:%02x:%02x:%02x:, is_connected %d\n",
+      ESP_LOGI(LOGT, "CONNECT_EVT, conn_id %d, remote %02x:%02x:%02x:%02x:%02x:%02x:, is_preped %d\n",
                param->connect.conn_id,
                param->connect.remote_bda[0], param->connect.remote_bda[1], param->connect.remote_bda[2],
                param->connect.remote_bda[3], param->connect.remote_bda[4], param->connect.remote_bda[5],
                param->connect.is_connected);
 
       svc->conn_id = param->connect.conn_id;
+
+      // Inform the higher layer that we're connected.
+      // This could probably pass some info about who connected, etc,
+      // but right now I don't care.
+      //
+      connectionEventHandler(true);
 
       // Start sent the update connection parameters to the peer device.
       // For the iOS system, please reference the apple official documents 

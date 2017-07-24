@@ -12,6 +12,7 @@
 
 #include "pid.h"
 #include "motor.h"
+#include "steering.h"
 
 #define ECHO_TEST_TXD  (4)
 #define ECHO_TEST_RXD  (5)
@@ -59,9 +60,34 @@ extern bool debug_mot;
       {
         uint8_t rx;
         uart_read_bytes(uart_num, &rx, 1, portMAX_DELAY);
-        printf("%c", rx);
+        uart_write_bytes(uart_num, (const char*)&rx, 1); // echo
+        // uart_flush(uart_num);               // don't wait for \n
         
-        if (rx != '\n')
+        
+        // handle escape commands from pyserial
+        // For other terminals THIS WILL BE DIFFERENT
+        // But we're only debugging, right?
+        //
+        // If this doesn't work in +make monitor+: pyserial had a bug in 
+        // it that would do a blocking read when there was already data
+        // in the buffer. How much life did that cost me? :)
+        // 
+        //     # [sudo] pip uninstall pyserial
+        //     # [sudo] pip install pyserial
+        //
+        if (rx == 0x1b)
+        {
+          // Escape sequence
+          line[0] = rx;
+
+          // read the next few bytes here and process the command
+          uart_read_bytes(uart_num, &line[1], 2, 1);
+          // printf("term: got sequence %02x %02x\n", line[1], line[2]);
+          break;
+        }
+        
+        // Handle normal text commands
+        if (rx != '\n') 
         {
           if (line + BUF_SIZE - 1 <= ptr)
           {
@@ -75,11 +101,41 @@ extern bool debug_mot;
           break;
       }
 
-      // We have a line in +line+ here
+      // We have a command in +line+ here
       
       // First char is the op code
       switch(line[0])
       {
+        case 0x1b:
+          // this is a command key. The third byte is the command.
+          switch(line[2])
+          {
+            case 0x44: // left arrow
+              printf("left\n");
+              stepper_step_fwd();
+              break;
+              
+            case 0x43: // right arrow
+              printf("right\n");
+              stepper_step_rev();
+              break;
+
+            default: 
+              printf("term: Unhandled esc %02x\n", line[1]);
+              break;
+          }
+          break;
+        
+        case 'E':
+          printf("Enable steering\n");
+          stepper_enable(true);
+          break;
+          
+        case 'e':
+          printf("Disable steering\n");
+          stepper_enable(false);
+          break;
+        
         case 'p':
         case 'i':
         case 'd':

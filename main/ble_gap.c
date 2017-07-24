@@ -11,6 +11,8 @@
 
 #define LOGT "GAP "
 
+
+
 esp_ble_adv_params_t adv_params = {
     .adv_int_min        = 0x20, // interval min: x*0.625 == (hex) * 1; 0x20 * 0.625 = 20ms
     .adv_int_max        = 0x40, // interval max; 0xA0=100ms
@@ -65,7 +67,7 @@ void gap_start(void)
 {
   // Configure BLE
   esp_err_t ret;
-
+  
   esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
   ret = esp_bt_controller_init(&bt_cfg);
   if (ret) 

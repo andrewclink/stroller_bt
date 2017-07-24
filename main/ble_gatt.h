@@ -5,6 +5,11 @@
 
 #include "defs.h"
 
+
+// Callback typedef for connection event
+typedef void (*ble_gatt_connectionEventHandler)(bool connected);
+
+
 enum {
   ble_index_service,
   
@@ -39,7 +44,6 @@ typedef struct ble_gatt_char_s {
 struct ble_gatt_service_s;
 typedef esp_gatt_status_t (*ble_gatt_char_cb_t)(struct ble_gatt_service_s *svc, ble_gatt_char_t * characteristic, void * buf, uint16_t *len);
 
-
 // Service entry type
 //
 typedef struct ble_gatt_service_s {
@@ -63,7 +67,7 @@ typedef struct ble_gatt_service_s {
 
 // Call to enable all services and characteristics that were created
 //
-void ble_gatt_start(void); 
+void ble_gatt_start(ble_gatt_connectionEventHandler handler); 
 
 // Create a service entry and register it for activation upon calling +ble_gatt_start+
 //

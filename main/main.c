@@ -17,6 +17,7 @@
 #include "ble_gap.h"
 #include "ble_gatt.h"
 
+#include "steering.h"
 #include "motor.h"
 #include "term.h"
 
@@ -52,6 +53,16 @@ static TaskHandle_t motor_task_h;
 static volatile uint16_t speed = 0;
 static volatile uint16_t tmpangle = 0xffff / 2;
 
+void client_didConnect(bool connected)
+{
+  if (!connected)
+  {
+    // Phone disconnected; stop the motors
+    motor_setPace_SpKM(0);
+    motor_set_us(0);
+  }
+    
+}
 
 esp_gatt_status_t stroller_didRequestValue(ble_gatt_service_t *svc, ble_gatt_char_t * characteristic, void * buffer, uint16_t *len)
 {
@@ -163,8 +174,13 @@ void app_main()
     
     // Start BLE
     gap_start();
-    ble_gatt_start();
+    ble_gatt_start(client_didConnect);
     
+    // Init steering controller
+    steering_init();
+    stepper_enable(true);
+    stepper_sleep(false);
+      
     // Start Motor Monitor
     xTaskCreate(&motor_task, "motor_t", 2048, NULL, 6, &motor_task_h);
     
