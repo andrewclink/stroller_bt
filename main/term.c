@@ -76,7 +76,6 @@ extern bool debug_mot;
       }
 
       // We have a line in +line+ here
-      printf("%s\n", line);
       
       // First char is the op code
       switch(line[0])
@@ -88,6 +87,8 @@ extern bool debug_mot;
           uint16_t ms;
           float p, i, d;
           pid_get(&ms, &p, &i, &d);
+					printf("setting pid\n");
+					printf("orig: %.4f %.4f %.4f\n", p, i, d);
           
           float var = atof((char*)&line[1]);
           switch(line[0])
@@ -97,6 +98,7 @@ extern bool debug_mot;
             case 'd': d = var; break;
           }
           
+					printf("new:  %.4f %.4f %.4f\n", p, i, d);
           pid_set(ms, p, i, d);
           break;
         }

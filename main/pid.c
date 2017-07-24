@@ -17,10 +17,12 @@ bool debug_pid = false;
 
 void pid_get(uint16_t *delta_ms, float * kp, float * ki, float * kd)
 {
+  float dt_seconds = (float)pid_interval_ms / 1000.0;
+	
   if (delta_ms) *delta_ms = pid_interval_ms;
   if (kp) *kp = pid_kp;
-  if (ki) *ki = pid_ki;
-  if (kd) *kd = pid_kd;
+  if (ki) *ki = pid_ki / dt_seconds;
+  if (kd) *kd = pid_kd * dt_seconds;
 }
 
 void pid_set(uint16_t delta_ms, float kp, float ki, float kd)

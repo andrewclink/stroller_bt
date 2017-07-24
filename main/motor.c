@@ -17,7 +17,7 @@
 #include "motor.h"
 #include "pid.h"
 
-#define wheel_circ_mm (304 * M_PI)
+#define wheel_circ_mm (290 * M_PI)
 #define wheel_pulley_teeth 190
 #define motor_pulley_teeth 14
 #define SPEED_CHANGE_UNIT 1
@@ -98,7 +98,10 @@ void motor_task(void *parm)
   motor_set_us(signal_lo_us);
   vTaskDelay(500 / portTICK_RATE_MS);
   
-  pid_set(100, 0.028, 0.025, 0.005);
+	// Can be changed over the serial connection with e.g. 'p0.001'
+	//
+  pid_set(100, 0.011, 0.0001, 0.005);
+
 
   for(;;)
   {
@@ -117,7 +120,7 @@ void motor_task(void *parm)
     
     if (motor_rpm_setpoint == 0)
     {
-      motor_set_us(signal_lo_us);
+      motor_set_us(0);
       continue;
     }
 
@@ -199,11 +202,21 @@ void motor_setRPM(int RPM)
 
 void motor_set_us(int us)
 {
+	if (0 == motor_us)
+	{
+		// We were stopped, so the controller won't listen.
+		// Send low signal to initialize
+	  uint32_t ticks = motor_us_to_ticks(signal_lo_us);
+	  WRITE_PERI_REG(LEDC_LSCH0_DUTY_REG, ticks << 4);
+	  WRITE_PERI_REG (LEDC_LSCH0_CONF1_REG, PWM_CONF1_DUTY_START_b);
+	  (*((volatile uint32_t *)ETS_UNCACHED_ADDR(LEDC_LSCH0_CONF0_REG))) |= PWM_CONF0_PARA_UP_b;
+		vTaskDelay(500 / portTICK_RATE_MS);
+	}
+	
   motor_us = us;
   
   uint32_t ticks = motor_us_to_ticks(us);
-  // printf("pwm: writing %u us; %u ticks\n", us, ticks);
-  
+
   WRITE_PERI_REG(LEDC_LSCH0_DUTY_REG, ticks << 4);
   WRITE_PERI_REG (LEDC_LSCH0_CONF1_REG, PWM_CONF1_DUTY_START_b);
   (*((volatile uint32_t *)ETS_UNCACHED_ADDR(LEDC_LSCH0_CONF0_REG))) |= PWM_CONF0_PARA_UP_b;
