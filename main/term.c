@@ -87,18 +87,18 @@ extern bool debug_mot;
         }
         
         // Handle normal text commands
-        if (rx != '\n') 
-        {
-          if (line + BUF_SIZE - 1 <= ptr)
-          {
-            printf("rx buf overflow\n");
-            break;
-          }
-
-          *ptr++ = rx;
-        }
-        else
+        if (rx == '\n'
+           ) 
           break;
+
+        if (line + BUF_SIZE - 1 <= ptr)
+        {
+          printf("rx buf overflow\n");
+          break;
+        }
+
+        *ptr++ = rx;
+
       }
 
       // We have a command in +line+ here
@@ -110,22 +110,28 @@ extern bool debug_mot;
           // this is a command key. The third byte is the command.
           switch(line[2])
           {
+            case 0x41: // up arrow
+              stepper_set_pos(0);
+              printf("term: center\n");
+              break;
+              
             case 0x44: // left arrow
-              printf("left\n");
-              stepper_step_fwd();
+              stepper_set_pos(50);
               break;
               
             case 0x43: // right arrow
-              printf("right\n");
-              stepper_step_rev();
+              stepper_set_pos(-50);
               break;
+              
 
             default: 
-              printf("term: Unhandled esc %02x\n", line[1]);
+              printf("term: Unhandled esc %02x %02x %02x\n", line[0], line[1], line[2]);
               break;
           }
           break;
         
+        // Steering Commands
+        //
         case 'E':
           printf("Enable steering\n");
           stepper_enable(true);
@@ -135,7 +141,21 @@ extern bool debug_mot;
           printf("Disable steering\n");
           stepper_enable(false);
           break;
+
+        case 's':
+        {
+          int val = atoi((char*)&line[1]);
+          printf("set steering to %d\n", val);
+          stepper_set_pos(val);
+          break;
+        }
         
+        case '+': stepper_step_rev(); break;
+        case '-': stepper_step_fwd(); break;
+        
+
+        // Motor Commands
+        //
         case 'p':
         case 'i':
         case 'd':
@@ -199,7 +219,7 @@ extern bool debug_mot;
         
         
         default: 
-          printf("term error\n");
+          printf("term error (%c)\n", line[0]);
         break;
         
       }

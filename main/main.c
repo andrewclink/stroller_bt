@@ -50,8 +50,6 @@ enum {
 
 static TaskHandle_t motor_task_h;
 
-static volatile uint16_t speed = 0;
-static volatile uint16_t tmpangle = 0xffff / 2;
 
 void client_didConnect(bool connected)
 {
@@ -60,6 +58,8 @@ void client_didConnect(bool connected)
     // Phone disconnected; stop the motors
     motor_setPace_SpKM(0);
     motor_set_us(0);
+    stepper_set_pos(0);
+    printf("main: failsafe\n");
   }
     
 }
@@ -74,6 +74,7 @@ esp_gatt_status_t stroller_didRequestValue(ble_gatt_service_t *svc, ble_gatt_cha
   {
     case speed_uuid:
     {
+      uint16_t speed = motor_getPace_SpKM();
       *buf++ = speed;
       *len = 2;
       
@@ -87,6 +88,7 @@ esp_gatt_status_t stroller_didRequestValue(ble_gatt_service_t *svc, ble_gatt_cha
     
     case steering_angle_uuid:
     {
+      int16_t tmpangle = stepper_get_pos();
       *buf++ = tmpangle;
       *len = 2;
       
@@ -108,9 +110,7 @@ esp_gatt_status_t stroller_didWriteValue(ble_gatt_service_t *svc, ble_gatt_char_
   
   // printf("OUT ");
   // for(int i=0; i<*len; i++)
-  // {
   //   printf("%02x ", buf[i]);
-  // }
   // printf("\n");
   
   
@@ -119,6 +119,8 @@ esp_gatt_status_t stroller_didWriteValue(ble_gatt_service_t *svc, ble_gatt_char_
   {
     case speed_uuid:
     {
+
+      int16_t speed = 0;
       uint16_t * buf = (uint16_t*)value;
       speed = *buf++;
       
@@ -128,12 +130,12 @@ esp_gatt_status_t stroller_didWriteValue(ble_gatt_service_t *svc, ble_gatt_char_
       return ESP_GATT_OK;
     }
     
-
     
     case steering_angle_uuid:
     {
       uint16_t * buf = (uint16_t*)value;
-      tmpangle = *buf++;
+      int16_t tmpangle = *buf++;
+      stepper_set_pos(tmpangle);
       
       return ESP_GATT_OK;
     }

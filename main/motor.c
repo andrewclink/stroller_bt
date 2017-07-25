@@ -186,6 +186,30 @@ void motor_setPace_SpKM(int sec_p_km)
   motor_setRPM(rpm_setpoint);
 }
 
+// Go back the other way.
+//
+// This returns the SET PACE, not the current speed, although
+// that'd be easy enough to get with the same process.
+//
+// I'd love to just cache this but the speed can be changed
+// through the terminal or handlebar buttons, etc.
+// 
+// This means we also need to make the characteristic notify 
+//
+uint16_t motor_getPace_SpKM(void)
+{
+  // Pace is infinite if setpoint is zero
+  if (0 == motor_rpm_setpoint)
+  {
+    return 0;
+  }
+  
+  // Start with motor RPM setpoint
+  //
+  int sec_per_km = motor_rpm_to_spk(motor_rpm_setpoint);
+  return sec_per_km;
+}
+
 void motor_setRPM(int RPM)
 {
   // bound upper value for safety
@@ -329,6 +353,20 @@ float motor_spk_to_rpm(int sec)
   printf("mot: %.2f RPM\n", motor_rpm);
   
   return motor_rpm;
+}
+
+float motor_rpm_to_spk(double rpm)
+{
+  // We have an FPU!
+  //
+  float wheel_rpm = rpm / ((float)wheel_pulley_teeth / (float)motor_pulley_teeth);
+  printf("mot: wheel rpm: %f\n", wheel_rpm);
+  float meters_p_sec = wheel_circ_mm * wheel_rpm / 1000.0 / 60.0;
+  
+  // xm/ 1min = 1min / xm = 1 min / (x / 1000m)kmb
+  float sec_per_km = 1000.0 / meters_p_sec;
+
+  return sec_per_km;
 }
 
 
